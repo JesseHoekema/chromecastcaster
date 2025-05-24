@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Chromecast Video Caster</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #121B2D;
+      color: white;
+      text-align: center;
+      padding-top: 50px;
+    }
+    video {
+      width: 60%;
+      margin-top: 20px;
+      border: 2px solid white;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 18px;
+      background-color: #935AF6;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      margin: 10px;
+    }
+    input {
+      padding: 10px;
+      font-size: 16px;
+      width: 300px;
+    }
+  </style>
+  <script type="text/javascript" src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
+</head>
+<body>
+  <h1>Cast Video to Chromecast</h1>
+  <input type="text" id="videoUrl" placeholder="Enter video URL" />
+  <br>
+  <video id="videoPlayer" controls loop>
+    <source src="" type="video/mp4">
+    Your browser does not support HTML5 video.
+  </video>
+  <br>
+  <button onclick="loadVideo()">Load Video</button>
+  <button onclick="castVideo()">Cast to Chromecast</button>
+
+  <script>
+    let castSession = null;
+    let mediaInfo = null;
+
+    function initializeCastApi() {
+      cast.framework.CastContext.getInstance().setOptions({
+        receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+        autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
+      });
+    }
+
+    window['__onGCastApiAvailable'] = function(isAvailable) {
+      if (isAvailable) {
+        initializeCastApi();
+      }
+    };
+
+    function loadVideo() {
+      const url = document.getElementById("videoUrl").value;
+      const video = document.getElementById("videoPlayer");
+      video.src = url;
+      video.load();
+    }
+
+    function castVideo() {
+      const url = document.getElementById("videoUrl").value;
+      const context = cast.framework.CastContext.getInstance();
+      context.requestSession().then(() => {
+        castSession = context.getCurrentSession();
+        mediaInfo = new chrome.cast.media.MediaInfo(url, 'video/mp4');
+        mediaInfo.metadata = new chrome.cast.media.GenericMediaMetadata();
+        mediaInfo.streamType = chrome.cast.media.StreamType.BUFFERED;
+
+        const request = new chrome.cast.media.LoadRequest(mediaInfo);
+        request.autoplay = true;
+        request.currentTime = 0;
+        request.repeatMode = chrome.cast.media.RepeatMode.REPEAT_ALL;
+
+        castSession.loadMedia(request).then(
+          () => console.log('Media loaded successfully'),
+          (errorCode) => console.error('Error loading media: ' + errorCode)
+        );
+      });
+    }
+  </script>
+</body>
+</html>
