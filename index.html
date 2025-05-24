@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Chromecast Video Caster</title>
+  <title>Chromecast Video Repeater</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -15,27 +15,27 @@
       margin-top: 20px;
       border: 2px solid white;
     }
-    button {
-      padding: 10px 20px;
-      font-size: 18px;
-      background-color: #935AF6;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      margin: 10px;
-    }
-    input {
+    button, input {
       padding: 10px;
       font-size: 16px;
+      border-radius: 6px;
+      border: none;
+      margin: 5px;
+    }
+    button {
+      background-color: #935AF6;
+      color: white;
+      cursor: pointer;
+    }
+    input {
       width: 300px;
     }
   </style>
   <script type="text/javascript" src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
 </head>
 <body>
-  <h1>Cast Video to Chromecast</h1>
-  <input type="text" id="videoUrl" placeholder="Enter video URL" />
+  <h1>Cast & Repeat Video</h1>
+  <input type="text" id="videoUrl" placeholder="Enter video URL (MP4)" />
   <br>
   <video id="videoPlayer" controls loop>
     <source src="" type="video/mp4">
@@ -46,8 +46,8 @@
   <button onclick="castVideo()">Cast to Chromecast</button>
 
   <script>
+    let currentVideoUrl = '';
     let castSession = null;
-    let mediaInfo = null;
 
     function initializeCastApi() {
       cast.framework.CastContext.getInstance().setOptions({
@@ -64,6 +64,7 @@
 
     function loadVideo() {
       const url = document.getElementById("videoUrl").value;
+      currentVideoUrl = url;
       const video = document.getElementById("videoPlayer");
       video.src = url;
       video.load();
@@ -71,23 +72,35 @@
 
     function castVideo() {
       const url = document.getElementById("videoUrl").value;
+      currentVideoUrl = url;
+
       const context = cast.framework.CastContext.getInstance();
       context.requestSession().then(() => {
         castSession = context.getCurrentSession();
-        mediaInfo = new chrome.cast.media.MediaInfo(url, 'video/mp4');
-        mediaInfo.metadata = new chrome.cast.media.GenericMediaMetadata();
-        mediaInfo.streamType = chrome.cast.media.StreamType.BUFFERED;
-
-        const request = new chrome.cast.media.LoadRequest(mediaInfo);
-        request.autoplay = true;
-        request.currentTime = 0;
-        request.repeatMode = chrome.cast.media.RepeatMode.REPEAT_ALL;
-
-        castSession.loadMedia(request).then(
-          () => console.log('Media loaded successfully'),
-          (errorCode) => console.error('Error loading media: ' + errorCode)
-        );
+        playVideoOnCast(url);
       });
+    }
+
+    function playVideoOnCast(url) {
+      const mediaInfo = new chrome.cast.media.MediaInfo(url, 'video/mp4');
+      mediaInfo.metadata = new chrome.cast.media.GenericMediaMetadata();
+      const request = new chrome.cast.media.LoadRequest(mediaInfo);
+
+      castSession.loadMedia(request).then(
+        () => {
+          const media = castSession.getMediaSession();
+          if (media) {
+            media.addUpdateListener(() => {
+              if (media.playerState === chrome.cast.media.PlayerState.IDLE &&
+                  media.idleReason === chrome.cast.media.IdleReason.FINISHED) {
+                // Recast the video when it finishes
+                playVideoOnCast(currentVideoUrl);
+              }
+            });
+          }
+        },
+        (err) => console.error('Load failed', err)
+      );
     }
   </script>
 </body>
