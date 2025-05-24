@@ -14,6 +14,7 @@
       width: 60%;
       margin-top: 20px;
       border: 2px solid white;
+      border-radius: 8px;
     }
     button, input {
       padding: 10px;
@@ -26,82 +27,267 @@
       background-color: #935AF6;
       color: white;
       cursor: pointer;
+      transition: background-color 0.3s;
+    }
+    button:hover {
+      background-color: #7A4DD1;
+    }
+    button:disabled {
+      background-color: #555;
+      cursor: not-allowed;
     }
     input {
       width: 300px;
+      padding: 12px;
+      background: #2A3441;
+      color: white;
+      border: 1px solid #444;
+    }
+    .status {
+      margin: 15px 0;
+      padding: 10px;
+      border-radius: 4px;
+      min-height: 20px;
+    }
+    .status.info {
+      background: #1e4f72;
+      border: 1px solid #2196F3;
+    }
+    .status.success {
+      background: #1e5f3f;
+      border: 1px solid #4CAF50;
+    }
+    .status.error {
+      background: #5f1e1e;
+      border: 1px solid #f44336;
+    }
+    .controls {
+      margin: 20px 0;
     }
   </style>
   <script type="text/javascript" src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
 </head>
 <body>
   <h1>Cast & Repeat Video</h1>
-  <input type="text" id="videoUrl" placeholder="Enter video URL (MP4)" />
-  <br>
-  <video id="videoPlayer" controls loop>
+  <input type="text" id="videoUrl" placeholder="Enter video URL (MP4, WebM, etc.)" />
+  <div class="status" id="status"></div>
+  
+  <video id="videoPlayer" controls loop muted>
     <source src="" type="video/mp4">
     Your browser does not support HTML5 video.
   </video>
-  <br>
-  <button onclick="loadVideo()">Load Video</button>
-  <button onclick="castVideo()">Cast to Chromecast</button>
-
+  
+  <div class="controls">
+    <button onclick="loadVideo()">Load Video</button>
+    <button onclick="castVideo()" id="castButton">Cast to Chromecast</button>
+    <button onclick="stopCasting()" id="stopButton" disabled>Stop Casting</button>
+  </div>
+  
   <script>
     let currentVideoUrl = '';
     let castSession = null;
+    let mediaSession = null;
+    let castContext = null;
+    let repeatTimer = null;
+
+    function updateStatus(message, type = 'info') {
+      const statusDiv = document.getElementById('status');
+      statusDiv.textContent = message;
+      statusDiv.className = `status ${type}`;
+    }
 
     function initializeCastApi() {
-      cast.framework.CastContext.getInstance().setOptions({
-        receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
-        autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
-      });
+      try {
+        castContext = cast.framework.CastContext.getInstance();
+        castContext.setOptions({
+          receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+          autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED
+        });
+
+        // Listen for session state changes
+        castContext.addEventListener(
+          cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
+          (event) => {
+            switch (event.sessionState) {
+              case cast.framework.SessionState.SESSION_STARTED:
+                castSession = castContext.getCurrentSession();
+                updateStatus('Connected to Chromecast', 'success');
+                document.getElementById('castButton').disabled = true;
+                document.getElementById('stopButton').disabled = false;
+                break;
+              case cast.framework.SessionState.SESSION_ENDED:
+                castSession = null;
+                mediaSession = null;
+                updateStatus('Disconnected from Chromecast', 'info');
+                document.getElementById('castButton').disabled = false;
+                document.getElementById('stopButton').disabled = true;
+                if (repeatTimer) {
+                  clearTimeout(repeatTimer);
+                  repeatTimer = null;
+                }
+                break;
+            }
+          }
+        );
+
+        updateStatus('Cast API ready. Enter video URL and click Load Video.', 'success');
+      } catch (error) {
+        updateStatus('Failed to initialize Cast API: ' + error.message, 'error');
+        console.error('Cast initialization error:', error);
+      }
     }
 
     window['__onGCastApiAvailable'] = function(isAvailable) {
       if (isAvailable) {
         initializeCastApi();
+      } else {
+        updateStatus('Cast API not available', 'error');
       }
     };
 
     function loadVideo() {
-      const url = document.getElementById("videoUrl").value;
+      const url = document.getElementById("videoUrl").value.trim();
+      
+      if (!url) {
+        updateStatus('Please enter a video URL', 'error');
+        return;
+      }
+
       currentVideoUrl = url;
       const video = document.getElementById("videoPlayer");
+      
+      // Set up local video with proper repeat handling
       video.src = url;
       video.load();
+      
+      // Ensure local video loops
+      video.loop = true;
+      
+      // Add additional event listeners for more reliable looping
+      video.addEventListener('ended', function() {
+        console.log('Video ended, restarting...');
+        video.currentTime = 0;
+        video.play().catch(e => console.log('Restart failed:', e));
+      });
+
+      video.addEventListener('loadeddata', function() {
+        updateStatus('Video loaded successfully. Ready to play or cast.', 'success');
+      });
+
+      video.addEventListener('error', function(e) {
+        updateStatus('Error loading video. Check the URL and try again.', 'error');
+        console.error('Video error:', e);
+      });
+
+      updateStatus('Loading video...', 'info');
     }
 
     function castVideo() {
-      const url = document.getElementById("videoUrl").value;
-      currentVideoUrl = url;
+      const url = document.getElementById("videoUrl").value.trim();
+      
+      if (!url) {
+        updateStatus('Please enter a video URL first', 'error');
+        return;
+      }
 
-      const context = cast.framework.CastContext.getInstance();
-      context.requestSession().then(() => {
-        castSession = context.getCurrentSession();
+      if (!castContext) {
+        updateStatus('Cast API not ready', 'error');
+        return;
+      }
+
+      currentVideoUrl = url;
+      updateStatus('Connecting to Chromecast...', 'info');
+
+      castContext.requestSession().then(() => {
+        castSession = castContext.getCurrentSession();
         playVideoOnCast(url);
+      }).catch((error) => {
+        updateStatus('Failed to connect to Chromecast: ' + error.message, 'error');
+        console.error('Cast session error:', error);
       });
     }
 
     function playVideoOnCast(url) {
+      if (!castSession) {
+        updateStatus('No active cast session', 'error');
+        return;
+      }
+
       const mediaInfo = new chrome.cast.media.MediaInfo(url, 'video/mp4');
       mediaInfo.metadata = new chrome.cast.media.GenericMediaMetadata();
+      mediaInfo.metadata.title = 'Repeating Video';
+      
       const request = new chrome.cast.media.LoadRequest(mediaInfo);
+      request.autoplay = true;
 
-      castSession.loadMedia(request).then(
-        () => {
-          const media = castSession.getMediaSession();
-          if (media) {
-            media.addUpdateListener(() => {
-              if (media.playerState === chrome.cast.media.PlayerState.IDLE &&
-                  media.idleReason === chrome.cast.media.IdleReason.FINISHED) {
-                // Recast the video when it finishes
-                playVideoOnCast(currentVideoUrl);
-              }
-            });
-          }
-        },
-        (err) => console.error('Load failed', err)
-      );
+      updateStatus('Loading video on Chromecast...', 'info');
+
+      castSession.loadMedia(request).then(() => {
+        mediaSession = castSession.getMediaSession();
+        updateStatus('Video playing on Chromecast (will repeat automatically)', 'success');
+        
+        if (mediaSession) {
+          // Set up media session listeners for repeat functionality
+          mediaSession.addUpdateListener(handleMediaStatusUpdate);
+        }
+      }).catch((error) => {
+        updateStatus('Failed to load video on Chromecast: ' + error.message, 'error');
+        console.error('Load media error:', error);
+      });
     }
+
+    function handleMediaStatusUpdate() {
+      if (!mediaSession) return;
+
+      console.log('Media status:', mediaSession.playerState, 'Idle reason:', mediaSession.idleReason);
+
+      // Check if video has ended
+      if (mediaSession.playerState === chrome.cast.media.PlayerState.IDLE) {
+        if (mediaSession.idleReason === chrome.cast.media.IdleReason.FINISHED) {
+          console.log('Video finished, restarting in 1 second...');
+          updateStatus('Video ended, restarting...', 'info');
+          
+          // Clear any existing timer
+          if (repeatTimer) {
+            clearTimeout(repeatTimer);
+          }
+          
+          // Restart video after a short delay
+          repeatTimer = setTimeout(() => {
+            if (castSession && currentVideoUrl) {
+              playVideoOnCast(currentVideoUrl);
+            }
+          }, 1000);
+        } else if (mediaSession.idleReason === chrome.cast.media.IdleReason.ERROR) {
+          updateStatus('Playback error occurred', 'error');
+        } else if (mediaSession.idleReason === chrome.cast.media.IdleReason.CANCELLED) {
+          updateStatus('Playback cancelled', 'info');
+        }
+      } else if (mediaSession.playerState === chrome.cast.media.PlayerState.PLAYING) {
+        updateStatus('Video playing on Chromecast (will repeat automatically)', 'success');
+      } else if (mediaSession.playerState === chrome.cast.media.PlayerState.PAUSED) {
+        updateStatus('Video paused on Chromecast', 'info');
+      } else if (mediaSession.playerState === chrome.cast.media.PlayerState.BUFFERING) {
+        updateStatus('Video buffering on Chromecast...', 'info');
+      }
+    }
+
+    function stopCasting() {
+      if (castSession) {
+        castSession.endSession(true);
+      }
+      if (repeatTimer) {
+        clearTimeout(repeatTimer);
+        repeatTimer = null;
+      }
+    }
+
+    // Handle page unload
+    window.addEventListener('beforeunload', function() {
+      if (repeatTimer) {
+        clearTimeout(repeatTimer);
+      }
+    });
   </script>
 </body>
 </html>
